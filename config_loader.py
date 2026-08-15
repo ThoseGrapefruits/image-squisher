@@ -36,9 +36,11 @@ class Config:
             self.source_extensions = list(source)
         
         # Conversion settings
-        self.jpegxl_quality: int = config_dict.get('jpegxl_quality', 100)
+        self.jpegxl_quality: int = config_dict.get('jpegxl_quality', 90)
         self.jpegxl_effort: int = config_dict.get('jpegxl_effort', 9)
         self.webp_method: int = config_dict.get('webp_method', 6)
+        self.webp_quality: int = config_dict.get('webp_quality', 90)
+        self.webp_lossless: bool = config_dict.get('webp_lossless', False)
         self.conversion_timeout: int = config_dict.get('conversion_timeout', 300)  # seconds
         self.max_animated_frames: int = config_dict.get('max_animated_frames', 1000)
         self.skip_second_threshold: float = config_dict.get('skip_second_threshold', 0.70)
@@ -71,6 +73,8 @@ class Config:
             raise ValueError("jpegxl_effort must be between 0 and 9")
         if not (0 <= self.webp_method <= 6):
             raise ValueError("webp_method must be between 0 and 6")
+        if not (1 <= self.webp_quality <= 100):
+            raise ValueError("webp_quality must be between 1 and 100")
         if self.conversion_timeout < 1:
             raise ValueError("conversion_timeout must be >= 1")
         if self.max_animated_frames < 1:
@@ -157,9 +161,11 @@ def create_default_config(config_path: Path) -> None:
         "recursive": True,
         "skip_extensions": [".webp", ".jxl"],
         "source_extensions": [],
-        "jpegxl_quality": 100,
+        "jpegxl_quality": 90,
         "jpegxl_effort": 9,
         "webp_method": 6,
+        "webp_quality": 90,
+        "webp_lossless": False,
         "conversion_timeout": 300,
         "max_animated_frames": 1000,
         "skip_second_threshold": 0.70,

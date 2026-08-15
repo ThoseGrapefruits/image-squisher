@@ -268,24 +268,15 @@ def convert_to_webp(
     output_path: Path,
     method: Optional[int] = None,
     max_frames: Optional[int] = None,
-    timeout: Optional[int] = None
+    timeout: Optional[int] = None,
+    quality: Optional[int] = None,
+    lossless: Optional[bool] = None
 ) -> Optional[int]:
     """
-    Convert an image to WebP format (lossless, highest compression).
+    Convert an image to WebP. Default is high-quality lossy (quality 90).
     Supports static images and animated formats Pillow can seek (GIF, APNG).
-    
-    Args:
-        image_path: Path to the source image
-        output_path: Path where the WebP file should be saved
-        method: WebP compression method (0-6, 6 = highest). If None, uses config value.
-        max_frames: Maximum frames for animations. If None, uses config value.
-        timeout: Optional deadline in seconds for animated conversions.
-        
-    Returns:
-        File size in bytes if successful, None if conversion failed
     """
-    # Get settings from config if not provided
-    if method is None or max_frames is None:
+    if method is None or max_frames is None or quality is None or lossless is None:
         try:
             from config_loader import load_config
             config = load_config()
@@ -293,16 +284,31 @@ def convert_to_webp(
                 method = config.webp_method
             if max_frames is None:
                 max_frames = config.max_animated_frames
+            if quality is None:
+                quality = config.webp_quality
+            if lossless is None:
+                lossless = config.webp_lossless
         except Exception:
-            # Fallback to defaults
             if method is None:
                 method = 6
             if max_frames is None:
                 max_frames = 1000
+            if quality is None:
+                quality = 90
+            if lossless is None:
+                lossless = False
     
     deadline = None
     if timeout is not None and timeout > 0:
         deadline = time.monotonic() + timeout
+    
+    save_kwargs = {
+        'format': 'WEBP',
+        'method': method,
+        'lossless': lossless,
+    }
+    if not lossless:
+        save_kwargs['quality'] = quality
     
     try:
         with Image.open(image_path) as img:
@@ -315,17 +321,14 @@ def convert_to_webp(
                 
                 frames[0].save(
                     output_path,
-                    format='WEBP',
                     save_all=True,
                     append_images=frames[1:],
                     duration=durations,
-                    lossless=True,
-                    method=method,
                     loop=loop,
+                    **save_kwargs,
                 )
                 return output_path.stat().st_size
             
-            # Static image conversion
             try:
                 img = ImageOps.exif_transpose(img)
             except Exception:
@@ -337,13 +340,7 @@ def convert_to_webp(
             elif img.mode not in ('RGB', 'RGBA'):
                 img = img.convert('RGB')
             
-            img.save(
-                output_path,
-                format='WEBP',
-                lossless=True,
-                method=method,
-            )
-            
+            img.save(output_path, **save_kwargs)
             return output_path.stat().st_size
     except Exception as e:
         logger = logging.getLogger('image-squisher')
@@ -363,6 +360,8 @@ def convert_image(
     jpegxl_quality: Optional[int] = None,
     jpegxl_effort: Optional[int] = None,
     webp_method: Optional[int] = None,
+    webp_quality: Optional[int] = None,
+    webp_lossless: Optional[bool] = None,
     max_animated_frames: Optional[int] = None,
     conversion_timeout: Optional[int] = None,
     skip_second_threshold: Optional[float] = None
@@ -386,15 +385,17 @@ def convert_image(
     jxl_path = temp_dir / f"{base_name}.tmp.jxl"
     webp_path = temp_dir / f"{base_name}.tmp.webp"
     
-    # Resolve conversion settings once for this image to avoid repeated config loads
-    if (
+    missing_settings = (
         jpegxl_quality is None
         or jpegxl_effort is None
         or webp_method is None
+        or webp_quality is None
+        or webp_lossless is None
         or max_animated_frames is None
         or conversion_timeout is None
         or skip_second_threshold is None
-    ):
+    )
+    if missing_settings:
         try:
             from config_loader import load_config
             config = load_config()
@@ -404,6 +405,10 @@ def convert_image(
                 jpegxl_effort = config.jpegxl_effort
             if webp_method is None:
                 webp_method = config.webp_method
+            if webp_quality is None:
+                webp_quality = config.webp_quality
+            if webp_lossless is None:
+                webp_lossless = config.webp_lossless
             if max_animated_frames is None:
                 max_animated_frames = config.max_animated_frames
             if conversion_timeout is None:
@@ -412,11 +417,15 @@ def convert_image(
                 skip_second_threshold = config.skip_second_threshold
         except Exception:
             if jpegxl_quality is None:
-                jpegxl_quality = 100
+                jpegxl_quality = 90
             if jpegxl_effort is None:
                 jpegxl_effort = 9
             if webp_method is None:
                 webp_method = 6
+            if webp_quality is None:
+                webp_quality = 90
+            if webp_lossless is None:
+                webp_lossless = False
             if max_animated_frames is None:
                 max_animated_frames = 1000
             if conversion_timeout is None:
@@ -462,7 +471,9 @@ def convert_image(
                     webp_path,
                     method=webp_method,
                     max_frames=max_animated_frames,
-                    timeout=conversion_timeout
+                    timeout=conversion_timeout,
+                    quality=webp_quality,
+                    lossless=webp_lossless
                 )
                 if webp_size is None:
                     logger.debug(f"WebP conversion failed for {image_path.name}")

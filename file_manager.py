@@ -79,6 +79,8 @@ def process_image(
     jpegxl_quality: Optional[int] = None,
     jpegxl_effort: Optional[int] = None,
     webp_method: Optional[int] = None,
+    webp_quality: Optional[int] = None,
+    webp_lossless: Optional[bool] = None,
     max_animated_frames: Optional[int] = None,
     conversion_timeout: Optional[int] = None,
     skip_second_threshold: Optional[float] = None
@@ -111,6 +113,8 @@ def process_image(
         jpegxl_quality=jpegxl_quality,
         jpegxl_effort=jpegxl_effort,
         webp_method=webp_method,
+        webp_quality=webp_quality,
+        webp_lossless=webp_lossless,
         max_animated_frames=max_animated_frames,
         conversion_timeout=conversion_timeout,
         skip_second_threshold=skip_second_threshold

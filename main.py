@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Image compression tool - losslessly converts images to JPEG XL and WebP, keeping all outputs."""
+"""Image compression tool - converts images to JPEG XL and WebP, keeping all outputs."""
 
 import argparse
 import sys
@@ -399,6 +399,8 @@ def main():
                 'jpegxl_quality': config.jpegxl_quality,
                 'jpegxl_effort': config.jpegxl_effort_busy,
                 'webp_method': config.webp_method_busy,
+                'webp_quality': config.webp_quality,
+                'webp_lossless': config.webp_lossless,
                 'max_animated_frames': config.max_animated_frames,
                 'conversion_timeout': config.conversion_timeout,
                 'skip_second_threshold': config.skip_second_threshold,
@@ -409,6 +411,8 @@ def main():
                 'jpegxl_quality': config.jpegxl_quality,
                 'jpegxl_effort': config.jpegxl_effort,
                 'webp_method': config.webp_method,
+                'webp_quality': config.webp_quality,
+                'webp_lossless': config.webp_lossless,
                 'max_animated_frames': config.max_animated_frames,
                 'conversion_timeout': config.conversion_timeout,
                 'skip_second_threshold': config.skip_second_threshold,
@@ -449,6 +453,8 @@ def main():
                     jpegxl_quality=conversion_settings['jpegxl_quality'],
                     jpegxl_effort=conversion_settings['jpegxl_effort'],
                     webp_method=conversion_settings['webp_method'],
+                    webp_quality=conversion_settings['webp_quality'],
+                    webp_lossless=conversion_settings['webp_lossless'],
                     max_animated_frames=conversion_settings['max_animated_frames'],
                     conversion_timeout=conversion_settings['conversion_timeout'],
                     skip_second_threshold=conversion_settings['skip_second_threshold']
@@ -645,6 +651,8 @@ def main():
                         jpegxl_quality=conversion_settings['jpegxl_quality'],
                         jpegxl_effort=conversion_settings['jpegxl_effort'],
                         webp_method=conversion_settings['webp_method'],
+                        webp_quality=conversion_settings['webp_quality'],
+                        webp_lossless=conversion_settings['webp_lossless'],
                         max_animated_frames=conversion_settings['max_animated_frames'],
                         conversion_timeout=conversion_settings['conversion_timeout'],
                         skip_second_threshold=conversion_settings['skip_second_threshold']

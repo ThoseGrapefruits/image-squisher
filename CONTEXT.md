@@ -1,6 +1,6 @@
 # Image Squisher
 
-Lossless image conversion tool. Scans a folder, converts each image to JPEG XL and WebP, and keeps the original plus every successful conversion beside it.
+Lossless-capable image conversion tool. Scans a folder, converts each image to JPEG XL and WebP, and keeps the original plus every successful conversion beside it. Defaults are visually lossless (quality 90), which is appropriate for camera HEIC/JPEG. Set `jpegxl_quality` to 100 and `webp_lossless` to true for mathematically lossless output.
 
 ## Layout
 
@@ -32,7 +32,7 @@ Temp names use `.tmp.*` so a crash cannot overwrite a finished output. `os.repla
 | Codec | How | Notes |
 | --- | --- | --- |
 | JPEG XL | `cjxl` CLI (`libjxl`) | Skipped if `cjxl` is missing or the source is animated. Quality 100 = lossless. |
-| WebP | Pillow `Image.save(format='WEBP', lossless=True)` | Static images apply EXIF orientation. Animated GIF/APNG frames use Pillow's compositor. Animated conversions honor `conversion_timeout`. |
+| WebP | Pillow `Image.save(format='WEBP')` | Default quality 90, lossy. `webp_lossless` enables lossless. Static images apply EXIF orientation. Animated GIF/APNG frames use Pillow's compositor. |
 
 PNG/GIF/BMP try WebP first; other types try JXL first. Both still run. HEIC/HEIF uses `pillow-heif` (`register_heif_opener` in `format_detector.py`).
 
@@ -62,9 +62,11 @@ On Unix/macOS, `SIGUSR1` throttles to 1 worker; `SIGUSR2` restores the configure
 | `recursive` | true | Overridden by `--no-recursive`. |
 | `skip_extensions` | `.webp`, `.jxl` | Not processed unless `--source` / `source_extensions` is set. |
 | `source_extensions` | empty | If non-empty, only these extensions are sources. Overridden by `--source`. |
-| `jpegxl_quality` | 100 | 1–100. 100 is lossless. |
-| `jpegxl_effort` | 9 | 0–9. |
-| `webp_method` | 6 | 0–6. |
+| `jpegxl_quality` | 90 | 1–100. 90 is visually lossless. 100 is mathematically lossless. |
+| `jpegxl_effort` | 9 | 1–10. |
+| `webp_method` | 6 | 0–6. Encoder effort, not quality. |
+| `webp_quality` | 90 | 1–100 when `webp_lossless` is false. |
+| `webp_lossless` | false | True encodes lossless WebP (often much larger for photos). |
 | `conversion_timeout` | 300 | Per-image `cjxl` timeout and animated WebP deadline (seconds). |
 | `max_animated_frames` | 1000 | Animation frame cap. |
 | `hang_timeout` | 300 | No-progress warning (seconds). Parallel: queue timeout. Single-thread: watchdog. |

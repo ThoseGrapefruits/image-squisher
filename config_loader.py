@@ -20,7 +20,20 @@ class Config:
         self.recursive: bool = config_dict.get('recursive', True)
         
         # File filtering
-        self.skip_extensions: List[str] = config_dict.get('skip_extensions', ['.webp', '.jxl'])
+        skip = config_dict.get('skip_extensions', ['.webp', '.jxl'])
+        if skip is None:
+            skip = ['.webp', '.jxl']
+        if isinstance(skip, str):
+            skip = [part.strip() for part in skip.split(',') if part.strip()]
+        self.skip_extensions: List[str] = skip
+        
+        source = config_dict.get('source_extensions')
+        if isinstance(source, str):
+            source = [part.strip() for part in source.split(',') if part.strip()]
+        if not source:
+            self.source_extensions: Optional[List[str]] = None
+        else:
+            self.source_extensions = list(source)
         
         # Conversion settings
         self.jpegxl_quality: int = config_dict.get('jpegxl_quality', 100)
@@ -81,6 +94,15 @@ class Config:
                 ext = '.' + ext
             normalized.append(ext)
         self.skip_extensions = normalized
+        
+        if self.source_extensions is not None:
+            source_normalized = []
+            for ext in self.source_extensions:
+                ext = ext.lower()
+                if not ext.startswith('.'):
+                    ext = '.' + ext
+                source_normalized.append(ext)
+            self.source_extensions = source_normalized
 
 
 def load_config(config_path: Optional[Path] = None) -> Config:
@@ -95,10 +117,19 @@ def load_config(config_path: Optional[Path] = None) -> Config:
     """
     if config_path is None:
         config_path = Path('config.json')
+        create_if_missing = True
+    else:
+        create_if_missing = False
     
-    # If config file doesn't exist, return default config
+    # If config file doesn't exist, optionally write defaults then load them
     if not config_path.exists():
-        return Config()
+        if create_if_missing:
+            try:
+                create_default_config(config_path)
+            except OSError:
+                return Config()
+        if not config_path.exists():
+            return Config()
     
     try:
         with open(config_path, 'r', encoding='utf-8') as f:
@@ -125,6 +156,7 @@ def create_default_config(config_path: Path) -> None:
         "hang_timeout": 300,
         "recursive": True,
         "skip_extensions": [".webp", ".jxl"],
+        "source_extensions": [],
         "jpegxl_quality": 100,
         "jpegxl_effort": 9,
         "webp_method": 6,

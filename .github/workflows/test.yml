@@ -30,7 +30,7 @@ jobs:
     - name: Check syntax
       run: |
         source venv/bin/activate
-        python -m py_compile main.py format_detector.py processor.py file_manager.py
+        python -m py_compile main.py format_detector.py processor.py file_manager.py config_loader.py
     
     - name: Test help output
       run: |

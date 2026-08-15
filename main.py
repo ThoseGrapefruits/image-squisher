@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Image compression tool - losslessly converts images to JPEG XL/WebP and keeps smallest."""
+"""Image compression tool - losslessly converts images to JPEG XL and WebP, keeping all outputs."""
 
 import argparse
 import sys
@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 from queue import Queue, Empty
 
-from format_detector import scan_folder, detect_formats
+from format_detector import scan_folder, detect_formats, normalize_extensions
 from file_manager import process_image
 from config_loader import load_config, Config
 
@@ -28,6 +28,17 @@ def format_bytes(bytes: int) -> str:
             return f"{bytes:.2f} {unit}"
         bytes /= 1024.0
     return f"{bytes:.2f} TB"
+
+
+def _record_formats(results: dict, format_kept: str) -> None:
+    """Increment per-format counters from a formats_written string like 'jxl+webp'."""
+    if format_kept == 'none' or not format_kept:
+        results['none'] += 1
+        return
+    names = format_kept.split('+')
+    for name in names:
+        if name in results:
+            results[name] += 1
 
 
 def format_progress_line(done: int, total: int, bar_width: int = 28) -> str:
@@ -84,6 +95,16 @@ def check_terminal_notifier() -> Optional[str]:
     return None
 
 
+def _ps_escape(text: str) -> str:
+    """Escape a string for inclusion in a PowerShell double-quoted string."""
+    return (
+        text.replace('`', '``')
+        .replace('"', '`"')
+        .replace('$', '`$')
+        .replace('\n', '`n')
+    )
+
+
 def send_notification(title: str, message: str, sound: str = 'default', enabled: bool = True) -> bool:
     """
     Send a notification (macOS: terminal-notifier, Windows: toast, Linux: notify-send).
@@ -125,14 +146,13 @@ def send_notification(title: str, message: str, sound: str = 'default', enabled:
         try:
             # Use Windows toast notifications via PowerShell
             # Escape message for PowerShell
-            escaped_title = title.replace('"', '`"')
-            escaped_message = message.replace('"', '`"').replace('\n', '`n')
+            escaped_title = _ps_escape(title)
+            escaped_message = _ps_escape(message)
             ps_command = f'[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null; $template = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02); $text = $template.GetElementsByTagName("text"); $text[0].AppendChild($template.CreateTextNode("{escaped_title}")) > $null; $text[1].AppendChild($template.CreateTextNode("{escaped_message}")) > $null; $toast = [Windows.UI.Notifications.ToastNotification]::new($template); [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("Image Squisher").Show($toast)'
             subprocess.run(
-                ['powershell', '-Command', ps_command],
+                ['powershell', '-NoProfile', '-Command', ps_command],
                 capture_output=True,
-                timeout=5,
-                shell=True
+                timeout=5
             )
             return True
         except Exception:
@@ -212,7 +232,7 @@ def setup_logging(log_file: Optional[str] = None, log_verbosity: str = 'INFO') -
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Losslessly compress images by converting to JPEG XL/WebP and keeping the smallest file.'
+        description='Losslessly convert images to JPEG XL and WebP, keeping all output files alongside the original.'
     )
     parser.add_argument(
         'folder',
@@ -233,7 +253,14 @@ def main():
         '--workers',
         type=int,
         default=None,
-        help='Number of parallel workers (overrides config.threads, default: number of CPU cores)'
+        help='Number of parallel workers (overrides config.threads)'
+    )
+    parser.add_argument(
+        '--source',
+        action='append',
+        default=None,
+        metavar='EXT',
+        help='Source file extension to process (e.g. .heic). Repeatable or comma-separated. Default: all supported types except skip_extensions.'
     )
     
     args = parser.parse_args()
@@ -263,14 +290,30 @@ def main():
     print(f"Scanning folder: {folder_path}")
     # Command-line argument overrides config
     recursive = not args.no_recursive if args.no_recursive else config.recursive
+    source_extensions = normalize_extensions(args.source)
+    if source_extensions is None:
+        source_extensions = config.source_extensions
     if recursive:
         print("Mode: Recursive (processing subdirectories)")
     else:
         print("Mode: Top-level only")
+    if source_extensions:
+        print(f"Source types: {', '.join(source_extensions)}")
+        heic_exts = {'.heic', '.heif', '.heics', '.heifs', '.hif'}
+        wants_heic = any(ext in heic_exts for ext in source_extensions)
+        from PIL import Image as _PilImage
+        heic_registered = '.heic' in _PilImage.registered_extensions()
+        if wants_heic and not heic_registered:
+            print("Warning: HEIC opener is not registered. Install pillow-heif (macOS: pip install pillow-heif).")
     print()
     
     # Scan for images
-    image_files = scan_folder(folder_path, recursive=recursive, skip_extensions=config.skip_extensions)
+    image_files = scan_folder(
+        folder_path,
+        recursive=recursive,
+        skip_extensions=config.skip_extensions,
+        source_extensions=source_extensions
+    )
     
     if not image_files:
         print("No image files found.")
@@ -301,15 +344,10 @@ def main():
     print()
     
     # Determine number of workers (--workers overrides config.threads)
-    import multiprocessing
     if args.workers is not None:
         num_workers = args.workers
     else:
-        # Use config.threads if set, otherwise default to CPU count
-        if config.threads > 1:
-            num_workers = config.threads
-        else:
-            num_workers = min(multiprocessing.cpu_count(), len(image_files))
+        num_workers = config.threads
     
     if num_workers < 1:
         num_workers = 1
@@ -322,7 +360,7 @@ def main():
     # Process images in parallel
     total_original = 0
     total_final = 0
-    results = {'original': 0, 'jxl': 0, 'webp': 0}
+    results = {'jxl': 0, 'webp': 0, 'none': 0}
     errors = 0
     start_time = time.time()
     last_progress_time = time.time()
@@ -537,13 +575,10 @@ def main():
             if success:
                 total_original += original_size
                 total_final += final_size
-                results[format_kept] += 1
+                _record_formats(results, format_kept)
                 
-                savings = original_size - final_size
-                savings_pct = (savings / original_size * 100) if original_size > 0 else 0
-                
-                print(f"{format_kept.upper()} kept ({format_bytes(original_size)} → {format_bytes(final_size)}, "
-                      f"-{format_bytes(savings)} / -{savings_pct:.1f}%)")
+                print(f"wrote {format_kept.upper()} "
+                      f"(orig {format_bytes(original_size)}, converted {format_bytes(final_size)})")
             else:
                 errors += 1
                 if error_msg:
@@ -566,81 +601,89 @@ def main():
                     )
                 print(f"ERROR (kept original)")
     else:
-        # Single-threaded processing (original behavior)
-        for i, image_path in enumerate(image_files, 1):
-            current_time = time.time()
-            
-            # Check for potential hang (no progress for hang_timeout seconds)
-            if current_time - last_progress_time > hang_timeout:
-                error_msg = f"Potential hang detected! Last processed: {image_files[i-2].name if i > 1 else 'none'}"
+        # Single-threaded processing
+        current_file = {'path': None}
+        progress_box = {'t': time.time()}
+        stop_watchdog = threading.Event()
+        
+        def _single_thread_watchdog():
+            while not stop_watchdog.wait(60):
+                stuck = current_file['path']
+                elapsed = time.time() - progress_box['t']
+                still_running = stuck is not None and elapsed > hang_timeout
+                if not still_running:
+                    continue
+                error_msg = f"Potential hang detected! No progress for {elapsed:.0f} seconds"
                 logger.error(error_msg)
-                logger.error(f"Current folder: {image_path.parent}")
-                logger.error(f"Stuck on file: {image_path.name}")
+                logger.error(f"Current folder: {stuck.parent}")
+                logger.error(f"Stuck on file: {stuck.name}")
                 send_notification(
                     'Image Squisher - Hang Detected',
-                    f"Script may be hung processing:\n{image_path.parent}\n\nFile: {image_path.name}",
+                    f"Script may be hung processing:\n{stuck.parent}\n\nFile: {stuck.name}",
                     'Basso',
                     config.enable_notifications
                 )
                 print(f"\n⚠ WARNING: Potential hang detected! Check log file for details.")
-                print(f"   Current folder: {image_path.parent}")
-                print(f"   Stuck on file: {image_path.name}")
-                # Continue processing but log the issue
-            
-            print(f"[{i}/{len(image_files)}] Processing: {image_path.name}", end=' ... ', flush=True)
-            
-            try:
-                process_start = time.time()
-                conversion_settings = get_load_adaptive_settings()
-                success, format_kept, original_size, final_size = process_image(
-                    image_path,
-                    jpegxl_quality=conversion_settings['jpegxl_quality'],
-                    jpegxl_effort=conversion_settings['jpegxl_effort'],
-                    webp_method=conversion_settings['webp_method'],
-                    max_animated_frames=conversion_settings['max_animated_frames'],
-                    conversion_timeout=conversion_settings['conversion_timeout'],
-                    skip_second_threshold=conversion_settings['skip_second_threshold']
-                )
-                process_duration = time.time() - process_start
+                print(f"   Current folder: {stuck.parent}")
+                print(f"   Stuck on file: {stuck.name}")
+                progress_box['t'] = time.time()
+        
+        watcher = threading.Thread(target=_single_thread_watchdog, daemon=True)
+        watcher.start()
+        
+        try:
+            for i, image_path in enumerate(image_files, 1):
+                current_file['path'] = image_path
+                progress_box['t'] = time.time()
                 
-                # Update last progress time
-                last_progress_time = time.time()
-            
-                if success:
-                    total_original += original_size
-                    total_final += final_size
-                    results[format_kept] += 1
-                    
-                    savings = original_size - final_size
-                    savings_pct = (savings / original_size * 100) if original_size > 0 else 0
-                    
-                    print(f"{format_kept.upper()} kept ({format_bytes(original_size)} → {format_bytes(final_size)}, "
-                          f"-{format_bytes(savings)} / -{savings_pct:.1f}%)")
-                else:
+                print(f"[{i}/{len(image_files)}] Processing: {image_path.name}", end=' ... ', flush=True)
+                
+                try:
+                    conversion_settings = get_load_adaptive_settings()
+                    success, format_kept, original_size, final_size = process_image(
+                        image_path,
+                        jpegxl_quality=conversion_settings['jpegxl_quality'],
+                        jpegxl_effort=conversion_settings['jpegxl_effort'],
+                        webp_method=conversion_settings['webp_method'],
+                        max_animated_frames=conversion_settings['max_animated_frames'],
+                        conversion_timeout=conversion_settings['conversion_timeout'],
+                        skip_second_threshold=conversion_settings['skip_second_threshold']
+                    )
+                    progress_box['t'] = time.time()
+                
+                    if success:
+                        total_original += original_size
+                        total_final += final_size
+                        _record_formats(results, format_kept)
+                        
+                        print(f"wrote {format_kept.upper()} "
+                              f"(orig {format_bytes(original_size)}, converted {format_bytes(final_size)})")
+                    else:
+                        errors += 1
+                        logger.warning(f"Failed to process {image_path.name}, kept original")
+                        print(f"ERROR (kept original)")
+                        send_notification(
+                            'Image Squisher - Error',
+                            f"Error processing:\n{image_path.name}\n\nFolder: {image_path.parent}",
+                            'Basso',
+                            config.enable_notifications
+                        )
+                except Exception as e:
                     errors += 1
-                    logger.warning(f"Failed to process {image_path.name}, kept original")
+                    error_msg = f"Exception processing {image_path.name}: {str(e)}"
+                    logger.error(error_msg, exc_info=True)
+                    logger.error(f"Error in folder: {image_path.parent}")
                     print(f"ERROR (kept original)")
-                    # Send notification for conversion failures
+                    
                     send_notification(
                         'Image Squisher - Error',
                         f"Error processing:\n{image_path.name}\n\nFolder: {image_path.parent}",
                         'Basso',
                         config.enable_notifications
                     )
-            except Exception as e:
-                errors += 1
-                error_msg = f"Exception processing {image_path.name}: {str(e)}"
-                logger.error(error_msg, exc_info=True)
-                logger.error(f"Error in folder: {image_path.parent}")
-                print(f"ERROR (kept original)")
-                
-                # Send notification for exceptions
-                send_notification(
-                    'Image Squisher - Error',
-                    f"Error processing:\n{image_path.name}\n\nFolder: {image_path.parent}",
-                    'Basso',
-                    config.enable_notifications
-                )
+        finally:
+            current_file['path'] = None
+            stop_watchdog.set()
     
     total_duration = time.time() - start_time
     
@@ -651,37 +694,35 @@ def main():
     print(f"  Successful: {len(image_files) - errors}")
     print(f"  Errors: {errors}")
     print()
-    print("  Format distribution:")
-    print(f"    Original kept: {results['original']}")
-    print(f"    JPEG XL kept: {results['jxl']}")
-    print(f"    WebP kept: {results['webp']}")
+    print("  Files written:")
+    print(f"    Originals kept: {len(image_files)}")
+    print(f"    JPEG XL: {results['jxl']}")
+    print(f"    WebP: {results['webp']}")
+    print(f"    No conversion: {results['none']}")
     print()
-    print("  Total size reduction:")
+    print("  Sizes:")
     print(f"    Original total: {format_bytes(total_original)}")
-    print(f"    Final total: {format_bytes(total_final)}")
-    savings = total_original - total_final
-    savings_pct = (savings / total_original * 100) if total_original > 0 else 0
-    print(f"    Saved: {format_bytes(savings)} ({savings_pct:.1f}%)")
+    print(f"    Converted total: {format_bytes(total_final)}")
     print(f"    Duration: {total_duration:.1f} seconds")
     
     # Log summary
     logger.info("=" * 60)
     logger.info(f"Summary: {len(image_files)} processed, {errors} errors, {total_duration:.1f}s")
-    logger.info(f"Saved: {format_bytes(savings)} ({savings_pct:.1f}%)")
+    logger.info(f"Wrote {results['jxl']} JXL, {results['webp']} WebP")
     
     # Send completion notification
     if config.enable_notifications:
         if errors > 0:
             send_notification(
                 'Image Squisher - Completed with Errors',
-                f"Processed {len(image_files)} images\n{errors} errors\nSaved: {format_bytes(savings)} ({savings_pct:.1f}%)",
+                f"Processed {len(image_files)} images\n{errors} errors\nJXL: {results['jxl']}, WebP: {results['webp']}",
                 'Glass',
                 config.enable_notifications
             )
         else:
             send_notification(
                 'Image Squisher - Completed',
-                f"Processed {len(image_files)} images\nSaved: {format_bytes(savings)} ({savings_pct:.1f}%)",
+                f"Processed {len(image_files)} images\nJXL: {results['jxl']}, WebP: {results['webp']}",
                 'Ping',
                 config.enable_notifications
             )

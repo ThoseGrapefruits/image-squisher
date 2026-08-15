@@ -31,5 +31,5 @@ run: ## Run the script (requires venv activation and folder argument)
 		echo "Usage: make run FOLDER=/path/to/images"; \
 		exit 1; \
 	fi
-	source venv/bin/activate && python main.py $(FOLDER)
+	source venv/bin/activate && python main.py "$(FOLDER)"
 

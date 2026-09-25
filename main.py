@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Image compression tool - converts images to JPEG XL and WebP, keeping all outputs."""
+"""Image compression tool - converts images to JPEG XL, WebP, and progressive JPEG."""
 
 import argparse
 import sys
@@ -31,7 +31,7 @@ def format_bytes(bytes: int) -> str:
 
 
 def _record_formats(results: dict, format_kept: str) -> None:
-    """Increment per-format counters from a formats_written string like 'jxl+webp'."""
+    """Increment per-format counters from a formats_written string like 'jxl+webp+pjpg'."""
     if format_kept == 'none' or not format_kept:
         results['none'] += 1
         return
@@ -232,7 +232,7 @@ def setup_logging(log_file: Optional[str] = None, log_verbosity: str = 'INFO') -
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Losslessly convert images to JPEG XL and WebP, keeping all output files alongside the original.'
+        description='Convert images to JPEG XL, WebP, and progressive JPEG, keeping all output files alongside the original.'
     )
     parser.add_argument(
         'folder',
@@ -338,7 +338,7 @@ def main():
             print("  Or use: winget install libjxl (if available)")
         else:
             print("  Install via your package manager (e.g., apt install libjxl-tools)")
-        print("  Images will only be converted to WebP format.")
+        print("  Images will still be converted to WebP and progressive JPEG.")
     else:
         print(f"✓ JPEG XL support available (using {cjxl_path})")
     print()
@@ -360,7 +360,7 @@ def main():
     # Process images in parallel
     total_original = 0
     total_final = 0
-    results = {'jxl': 0, 'webp': 0, 'none': 0}
+    results = {'jxl': 0, 'webp': 0, 'pjpg': 0, 'none': 0}
     errors = 0
     start_time = time.time()
     last_progress_time = time.time()
@@ -401,6 +401,7 @@ def main():
                 'webp_method': config.webp_method_busy,
                 'webp_quality': config.webp_quality,
                 'webp_lossless': config.webp_lossless,
+                'jpeg_quality': config.jpeg_quality,
                 'max_animated_frames': config.max_animated_frames,
                 'conversion_timeout': config.conversion_timeout,
                 'skip_second_threshold': config.skip_second_threshold,
@@ -413,6 +414,7 @@ def main():
                 'webp_method': config.webp_method,
                 'webp_quality': config.webp_quality,
                 'webp_lossless': config.webp_lossless,
+                'jpeg_quality': config.jpeg_quality,
                 'max_animated_frames': config.max_animated_frames,
                 'conversion_timeout': config.conversion_timeout,
                 'skip_second_threshold': config.skip_second_threshold,
@@ -455,6 +457,7 @@ def main():
                     webp_method=conversion_settings['webp_method'],
                     webp_quality=conversion_settings['webp_quality'],
                     webp_lossless=conversion_settings['webp_lossless'],
+                    jpeg_quality=conversion_settings['jpeg_quality'],
                     max_animated_frames=conversion_settings['max_animated_frames'],
                     conversion_timeout=conversion_settings['conversion_timeout'],
                     skip_second_threshold=conversion_settings['skip_second_threshold']
@@ -653,6 +656,7 @@ def main():
                         webp_method=conversion_settings['webp_method'],
                         webp_quality=conversion_settings['webp_quality'],
                         webp_lossless=conversion_settings['webp_lossless'],
+                        jpeg_quality=conversion_settings['jpeg_quality'],
                         max_animated_frames=conversion_settings['max_animated_frames'],
                         conversion_timeout=conversion_settings['conversion_timeout'],
                         skip_second_threshold=conversion_settings['skip_second_threshold']
@@ -706,6 +710,7 @@ def main():
     print(f"    Originals kept: {len(image_files)}")
     print(f"    JPEG XL: {results['jxl']}")
     print(f"    WebP: {results['webp']}")
+    print(f"    Progressive JPEG: {results['pjpg']}")
     print(f"    No conversion: {results['none']}")
     print()
     print("  Sizes:")
@@ -716,21 +721,23 @@ def main():
     # Log summary
     logger.info("=" * 60)
     logger.info(f"Summary: {len(image_files)} processed, {errors} errors, {total_duration:.1f}s")
-    logger.info(f"Wrote {results['jxl']} JXL, {results['webp']} WebP")
+    logger.info(
+        f"Wrote {results['jxl']} JXL, {results['webp']} WebP, {results['pjpg']} progressive JPEG"
+    )
     
     # Send completion notification
     if config.enable_notifications:
         if errors > 0:
             send_notification(
                 'Image Squisher - Completed with Errors',
-                f"Processed {len(image_files)} images\n{errors} errors\nJXL: {results['jxl']}, WebP: {results['webp']}",
+                f"Processed {len(image_files)} images\n{errors} errors\nJXL: {results['jxl']}, WebP: {results['webp']}, progressive JPEG: {results['pjpg']}",
                 'Glass',
                 config.enable_notifications
             )
         else:
             send_notification(
                 'Image Squisher - Completed',
-                f"Processed {len(image_files)} images\nJXL: {results['jxl']}, WebP: {results['webp']}",
+                f"Processed {len(image_files)} images\nJXL: {results['jxl']}, WebP: {results['webp']}, progressive JPEG: {results['pjpg']}",
                 'Ping',
                 config.enable_notifications
             )

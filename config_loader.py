@@ -41,6 +41,7 @@ class Config:
         self.webp_method: int = config_dict.get('webp_method', 6)
         self.webp_quality: int = config_dict.get('webp_quality', 90)
         self.webp_lossless: bool = config_dict.get('webp_lossless', False)
+        self.jpeg_quality: int = config_dict.get('jpeg_quality', 90)
         self.conversion_timeout: int = config_dict.get('conversion_timeout', 300)  # seconds
         self.max_animated_frames: int = config_dict.get('max_animated_frames', 1000)
         self.skip_second_threshold: float = config_dict.get('skip_second_threshold', 0.70)
@@ -75,6 +76,8 @@ class Config:
             raise ValueError("webp_method must be between 0 and 6")
         if not (1 <= self.webp_quality <= 100):
             raise ValueError("webp_quality must be between 1 and 100")
+        if not (1 <= self.jpeg_quality <= 100):
+            raise ValueError("jpeg_quality must be between 1 and 100")
         if self.conversion_timeout < 1:
             raise ValueError("conversion_timeout must be >= 1")
         if self.max_animated_frames < 1:
@@ -166,6 +169,7 @@ def create_default_config(config_path: Path) -> None:
         "webp_method": 6,
         "webp_quality": 90,
         "webp_lossless": False,
+        "jpeg_quality": 90,
         "conversion_timeout": 300,
         "max_animated_frames": 1000,
         "skip_second_threshold": 0.70,

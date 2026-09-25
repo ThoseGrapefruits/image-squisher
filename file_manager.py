@@ -4,6 +4,8 @@ import os
 from pathlib import Path
 from typing import Optional, Tuple
 
+from format_detector import PROGRESSIVE_JPEG_OUTPUT_SUFFIX
+
 
 def get_file_size(filepath: Path) -> int:
     """Get file size in bytes."""
@@ -81,15 +83,16 @@ def process_image(
     webp_method: Optional[int] = None,
     webp_quality: Optional[int] = None,
     webp_lossless: Optional[bool] = None,
+    jpeg_quality: Optional[int] = None,
     max_animated_frames: Optional[int] = None,
     conversion_timeout: Optional[int] = None,
     skip_second_threshold: Optional[float] = None
 ) -> Tuple[bool, str, int, int]:
     """
-    Process a single image: convert to JPEG XL and WebP, keep all successful outputs.
+    Process a single image: convert to JPEG XL, WebP, and progressive JPEG.
     
-    Successful conversions are saved beside the original as {stem}.jxl and/or
-    {stem}.webp. Same-stem files in one folder share those output names.
+    Successful conversions are saved beside the original as {stem}.jxl,
+    {stem}.webp, and {stem}.p.jpg. Same-stem files in one folder share those names.
     
     Args:
         image_path: Path to the image to process
@@ -97,7 +100,7 @@ def process_image(
     Returns:
         Tuple of (success, formats_written, original_size, converted_total_size)
         success: True if processing completed successfully
-        formats_written: 'jxl', 'webp', 'jxl+webp', or 'none'
+        formats_written: 'jxl', 'webp', 'pjpg', a '+'-joined combination, or 'none'
         original_size: Size of original file in bytes
         converted_total_size: Combined size of written converted files in bytes
     """
@@ -106,7 +109,7 @@ def process_image(
     original_size = get_file_size(image_path)
     temp_dir = image_path.parent
     
-    jxl_path, webp_path, jxl_size, webp_size = convert_image(
+    jxl_path, webp_path, pjpg_path, jxl_size, webp_size, pjpg_size = convert_image(
         image_path,
         temp_dir,
         original_size,
@@ -115,6 +118,7 @@ def process_image(
         webp_method=webp_method,
         webp_quality=webp_quality,
         webp_lossless=webp_lossless,
+        jpeg_quality=jpeg_quality,
         max_animated_frames=max_animated_frames,
         conversion_timeout=conversion_timeout,
         skip_second_threshold=skip_second_threshold
@@ -139,11 +143,19 @@ def process_image(
                 converted_total += get_file_size(saved)
             else:
                 cleanup_temp_files(webp_path)
+
+        if pjpg_path and pjpg_size is not None:
+            saved = save_converted_file(image_path, pjpg_path, PROGRESSIVE_JPEG_OUTPUT_SUFFIX)
+            if saved:
+                written.append('pjpg')
+                converted_total += get_file_size(saved)
+            else:
+                cleanup_temp_files(pjpg_path)
         
         format_name = '+'.join(written) if written else 'none'
         return True, format_name, original_size, converted_total
     
     except Exception:
-        cleanup_temp_files(jxl_path, webp_path)
+        cleanup_temp_files(jxl_path, webp_path, pjpg_path)
         return False, 'none', original_size, 0
 

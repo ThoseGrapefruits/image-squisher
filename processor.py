@@ -1,4 +1,4 @@
-"""Image conversion to JPEG XL and WebP formats."""
+"""Image conversion to JPEG XL, WebP, and progressive JPEG."""
 
 import io
 import logging
@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Optional, Tuple, List
 from PIL import Image, ImageOps
 
-from format_detector import register_optional_formats
+from format_detector import is_progressive_jpeg_output, register_optional_formats
 
 register_optional_formats()
 
@@ -85,7 +85,7 @@ def _check_cjxl_available() -> Optional[str]:
 
 
 def _prepare_pillow_image(img: Image.Image) -> Image.Image:
-    """Apply EXIF orientation and a mode cjxl/WebP can encode."""
+    """Apply EXIF orientation and a mode cjxl/WebP/JPEG can encode."""
     try:
         img = ImageOps.exif_transpose(img)
     except Exception:
@@ -263,6 +263,66 @@ def _extract_animation_frames(
     return frames, durations, loop
 
 
+def _image_for_jpeg(img: Image.Image) -> Image.Image:
+    """Return an RGB or L image. Alpha is composited onto white."""
+    img = _prepare_pillow_image(img)
+    if img.mode == 'RGBA':
+        background = Image.new('RGB', img.size, (255, 255, 255))
+        background.paste(img, mask=img.getchannel('A'))
+        return background
+    if img.mode == 'L':
+        return img
+    if img.mode != 'RGB':
+        return img.convert('RGB')
+    return img
+
+
+def convert_to_progressive_jpeg(
+    image_path: Path,
+    output_path: Path,
+    quality: Optional[int] = None
+) -> Optional[int]:
+    """
+    Re-encode an image as a progressive JPEG via Pillow.
+    Animated sources and existing {stem}.p.jpg outputs are skipped.
+    """
+    if is_progressive_jpeg_output(image_path):
+        return None
+    if is_animated_image(image_path):
+        return None
+
+    if quality is None:
+        try:
+            from config_loader import load_config
+            quality = load_config().jpeg_quality
+        except Exception:
+            quality = 90
+
+    try:
+        with Image.open(image_path) as img:
+            icc = img.info.get('icc_profile')
+            prepared = _image_for_jpeg(img)
+            save_kwargs = {
+                'format': 'JPEG',
+                'quality': quality,
+                'progressive': True,
+                'optimize': True,
+            }
+            if icc:
+                save_kwargs['icc_profile'] = icc
+            prepared.save(output_path, **save_kwargs)
+            return output_path.stat().st_size
+    except Exception as e:
+        logger = logging.getLogger('image-squisher')
+        logger.debug(f"Progressive JPEG conversion failed for {image_path.name}: {e}")
+        if output_path.exists():
+            try:
+                output_path.unlink()
+            except Exception:
+                pass
+        return None
+
+
 def convert_to_webp(
     image_path: Path,
     output_path: Path,
@@ -362,12 +422,13 @@ def convert_image(
     webp_method: Optional[int] = None,
     webp_quality: Optional[int] = None,
     webp_lossless: Optional[bool] = None,
+    jpeg_quality: Optional[int] = None,
     max_animated_frames: Optional[int] = None,
     conversion_timeout: Optional[int] = None,
     skip_second_threshold: Optional[float] = None
 ) -> Tuple[Optional[Path], Optional[Path], Optional[int], Optional[int]]:
     """
-    Convert an image to both JPEG XL and WebP formats.
+    Convert an image to JPEG XL, WebP, and progressive JPEG.
     
     Args:
         image_path: Path to the source image
@@ -375,7 +436,7 @@ def convert_image(
         original_size: Original file size in bytes
         
     Returns:
-        Tuple of (jxl_path, webp_path, jxl_size, webp_size)
+        Tuple of (jxl_path, webp_path, pjpg_path, jxl_size, webp_size, pjpg_size)
         Paths and sizes will be None if conversion failed
     """
     logger = logging.getLogger('image-squisher')
@@ -384,6 +445,7 @@ def convert_image(
 
     jxl_path = temp_dir / f"{base_name}.tmp.jxl"
     webp_path = temp_dir / f"{base_name}.tmp.webp"
+    pjpg_path = temp_dir / f"{base_name}.tmp.p.jpg"
     
     missing_settings = (
         jpegxl_quality is None
@@ -391,6 +453,7 @@ def convert_image(
         or webp_method is None
         or webp_quality is None
         or webp_lossless is None
+        or jpeg_quality is None
         or max_animated_frames is None
         or conversion_timeout is None
         or skip_second_threshold is None
@@ -409,6 +472,8 @@ def convert_image(
                 webp_quality = config.webp_quality
             if webp_lossless is None:
                 webp_lossless = config.webp_lossless
+            if jpeg_quality is None:
+                jpeg_quality = config.jpeg_quality
             if max_animated_frames is None:
                 max_animated_frames = config.max_animated_frames
             if conversion_timeout is None:
@@ -426,6 +491,8 @@ def convert_image(
                 webp_quality = 90
             if webp_lossless is None:
                 webp_lossless = False
+            if jpeg_quality is None:
+                jpeg_quality = 90
             if max_animated_frames is None:
                 max_animated_frames = 1000
             if conversion_timeout is None:
@@ -435,8 +502,10 @@ def convert_image(
     
     jxl_size: Optional[int] = None
     webp_size: Optional[int] = None
+    pjpg_size: Optional[int] = None
     jxl_error: Optional[str] = None
     webp_error: Optional[str] = None
+    pjpg_error: Optional[str] = None
 
     # PNG/GIF/BMP often compress well as WebP; JPEG/TIFF often as JXL. Order is cosmetic.
     prefer_webp_exts = {'.png', '.gif', '.bmp'}
@@ -446,6 +515,8 @@ def convert_image(
         run_order = [codec for codec in run_order if codec != 'jxl']
     elif suffix == '.webp':
         run_order = [codec for codec in run_order if codec != 'webp']
+    if not is_progressive_jpeg_output(image_path):
+        run_order.append('pjpg')
 
     for codec in run_order:
         if codec == 'jxl':
@@ -464,6 +535,25 @@ def convert_image(
             except Exception as e:
                 jxl_error = str(e)
                 logger.warning(f"JXL conversion exception for {image_path.name}: {e}", exc_info=True)
+        elif codec == 'pjpg':
+            try:
+                pjpg_size = convert_to_progressive_jpeg(
+                    image_path,
+                    pjpg_path,
+                    quality=jpeg_quality
+                )
+                if pjpg_size is None:
+                    logger.debug(f"Progressive JPEG conversion failed for {image_path.name}")
+                else:
+                    logger.debug(
+                        f"Progressive JPEG conversion succeeded for {image_path.name}: {pjpg_size} bytes"
+                    )
+            except Exception as e:
+                pjpg_error = str(e)
+                logger.warning(
+                    f"Progressive JPEG conversion exception for {image_path.name}: {e}",
+                    exc_info=True
+                )
         else:
             try:
                 webp_size = convert_to_webp(
@@ -484,17 +574,19 @@ def convert_image(
                 logger.warning(f"WebP conversion exception for {image_path.name}: {e}", exc_info=True)
     
     # Log results for debugging
-    if jxl_size is None and webp_size is None:
-        logger.warning(f"Both JXL and WebP conversions failed for {image_path.name}")
+    if jxl_size is None and webp_size is None and pjpg_size is None:
+        logger.warning(f"All conversions failed for {image_path.name}")
         if jxl_error:
             logger.warning(f"JXL error: {jxl_error}")
         if webp_error:
             logger.warning(f"WebP error: {webp_error}")
-    elif jxl_size is None:
+        if pjpg_error:
+            logger.warning(f"Progressive JPEG error: {pjpg_error}")
+    elif jxl_size is None and webp_size is not None:
         logger.debug(f"JXL conversion failed, WebP succeeded ({webp_size} bytes) for {image_path.name}")
-    elif webp_size is None:
+    elif webp_size is None and jxl_size is not None:
         logger.debug(f"WebP conversion failed, JXL succeeded ({jxl_size} bytes) for {image_path.name}")
-    else:
+    elif jxl_size is not None and webp_size is not None:
         logger.debug(f"Both conversions succeeded for {image_path.name}: JXL={jxl_size} bytes, WebP={webp_size} bytes")
     
     # Clean up if conversion failed
@@ -505,6 +597,10 @@ def convert_image(
     if webp_size is None and webp_path.exists():
         webp_path.unlink()
         webp_path = None
+
+    if pjpg_size is None and pjpg_path.exists():
+        pjpg_path.unlink()
+        pjpg_path = None
     
-    return jxl_path, webp_path, jxl_size, webp_size
+    return jxl_path, webp_path, pjpg_path, jxl_size, webp_size, pjpg_size
 

@@ -4,6 +4,9 @@ from pathlib import Path
 from typing import List, Set, Optional
 from PIL import Image
 
+# Derivative written by this tool. Suffix is .jpg, so extension filters do not exclude it.
+PROGRESSIVE_JPEG_OUTPUT_SUFFIX = '.p.jpg'
+
 # Common image extensions
 IMAGE_EXTENSIONS = {
     '.png', '.jpg', '.jpeg', '.jpe', '.jfif',
@@ -48,6 +51,11 @@ def normalize_extensions(values: Optional[List[str]]) -> Optional[List[str]]:
     if not exts:
         return None
     return exts
+
+
+def is_progressive_jpeg_output(filepath: Path) -> bool:
+    """True for {stem}.p.jpg files produced by this tool."""
+    return filepath.name.lower().endswith(PROGRESSIVE_JPEG_OUTPUT_SUFFIX)
 
 
 def is_image_file(filepath: Path) -> bool:
@@ -103,6 +111,8 @@ def scan_folder(
     
     for filepath in folder_path.glob(pattern):
         if not filepath.is_file():
+            continue
+        if is_progressive_jpeg_output(filepath):
             continue
         suffix = filepath.suffix.lower()
         if source_set is not None:
